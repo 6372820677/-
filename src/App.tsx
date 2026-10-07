@@ -1,18 +1,45 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { StatusFilter } from "./types";
 import { useTaskSearch } from "./useTaskSearch";
-import { pageOf } from "./query";
+import { pageOf, readQuery, writeQuery } from "./query";
 export default function App() {
-  const [draft, setDraft] = useState("");
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("ALL");
-  const [page, setPage] = useState(1);
-  const { tasks, loading, error } = useTaskSearch(q, status);
+  const initial = useMemo(() => readQuery(window.location.search), []);
+  const [draft, setDraft] = useState(initial.q);
+  const [q, setQ] = useState(initial.q);
+  const [status, setStatus] = useState<StatusFilter>(initial.status);
+  const [page, setPage] = useState(initial.page);
+  const { tasks, loading, error, ready } = useTaskSearch(q, status);
   const view = pageOf(tasks, page);
+
+  // 前进/后退：从 URL 恢复输入框、已提交搜索词、筛选与页码，并触发对应查询。
+  useEffect(() => {
+    const onPop = () => {
+      const f = readQuery(window.location.search);
+      setDraft(f.q);
+      setQ(f.q);
+      setStatus(f.status);
+      setPage(f.page);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // 仅在当前查询成功提交结果后，才按结果页数钳制越界页码（replace，不增加历史项）。
+  useEffect(() => {
+    if (!ready) return;
+    if (view.current !== page) {
+      setPage(view.current);
+      writeQuery({ q, status, page: view.current }, "replace");
+    }
+  }, [ready, view.current, page, q, status]);
+
   function search(e: React.FormEvent) {
     e.preventDefault();
-    setQ(draft.trim());
+    const next = draft.trim();
+    setDraft(next);
+    setQ(next);
     setPage(1);
+    writeQuery({ q: next, status, page: 1 }, "replace");
   }
   return (
     <>
@@ -38,8 +65,10 @@ export default function App() {
             <select
               value={status}
               onChange={(e) => {
-                setStatus(e.target.value as StatusFilter);
+                const next = e.target.value as StatusFilter;
+                setStatus(next);
                 setPage(1);
+                writeQuery({ q, status: next, page: 1 }, "push");
               }}
             >
               <option value="ALL">全部状态</option>
@@ -87,7 +116,11 @@ export default function App() {
         <nav className="pager" aria-label="分页">
           <button
             disabled={loading || view.current === 1}
-            onClick={() => setPage(view.current - 1)}
+            onClick={() => {
+              const next = view.current - 1;
+              setPage(next);
+              writeQuery({ q, status, page: next }, "push");
+            }}
           >
             上一页
           </button>
@@ -96,7 +129,11 @@ export default function App() {
           </span>
           <button
             disabled={loading || view.current === view.pages}
-            onClick={() => setPage(view.current + 1)}
+            onClick={() => {
+              const next = view.current + 1;
+              setPage(next);
+              writeQuery({ q, status, page: next }, "push");
+            }}
           >
             下一页
           </button>
